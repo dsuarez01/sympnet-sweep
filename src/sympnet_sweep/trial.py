@@ -92,6 +92,7 @@ def run_trial(trial_config: TrialConfig, args: argparse.Namespace) -> None:
 			pred = model(x_i, dt=trial_config.h, symmetric=trial_config.symmetric)
 			loss = ((pred-truth)**2).sum(dim=-1).mean() # avg l2 norms over batch
 			loss.backward()
+			torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 			opt.step()
 			train_loss += loss.item()
 
@@ -112,7 +113,7 @@ def run_trial(trial_config: TrialConfig, args: argparse.Namespace) -> None:
 		val_losses.append(val_loss)
 
 		# checkpt once every 5000 epochs, or at the very end
-		if (epoch % 5000 == 0) or (epoch == trial_config.epochs-1):
+		if ((epoch+1) % 5000 == 0) or (epoch == trial_config.epochs-1):
 			checkpt = {
 				"model": model.state_dict(),
 				"opt": opt.state_dict(),
@@ -127,7 +128,7 @@ def run_trial(trial_config: TrialConfig, args: argparse.Namespace) -> None:
 				trial_config.checkpt_path,
 			)
 
-			print(f"Epoch progress at checkpt: {epoch}/{trial_config.epochs}")
+			print(f"Epoch progress at checkpt: {epoch+1}/{trial_config.epochs}")
 
 		run.log({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss})
 

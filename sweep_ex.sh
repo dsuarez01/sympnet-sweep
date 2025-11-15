@@ -104,7 +104,6 @@ for ((i = 1; i <= worker_num; i++)); do
     --memory="$TOTAL_MEM_BYTES" \
     --object-store-memory="$OBJECT_STORE_BYTES" \
     --redis-password="$REDIS_PW" \
-    --temp-dir="/path/to/ray_log/tmpdir/here" \
     --block
   " &
   sleep 5
