@@ -1,7 +1,5 @@
-from typing import Literal
 import pathlib
 from dataclasses import dataclass, field
-import uuid
 
 import numpy as np
 import torch
@@ -19,9 +17,9 @@ def solve(system: str, n_data: int, h: float, F: float, omega: float) -> np.ndar
 	dataset = []
 
 	for i in range(n_data):
-		p_0 = np.random.uniform(-2.0, 2.0)
+		p_0 = np.random.uniform(-0.5, 0.5)
 		p_tau_0 = 0.0
-		q_0 = np.random.uniform(-2.0, 2.0)
+		q_0 = np.random.uniform(-0.5, 0.5)
 		tau_0 = np.random.uniform(0, period)
 		x_aug_i = np.array([p_0, p_tau_0, q_0, tau_0])
 
@@ -93,6 +91,7 @@ class TrialConfig:
 	method: str
 	
 	# train config
+	weight_decay: float
 	val_size: float
 	random_state: int
 	batch_size: int
@@ -119,6 +118,8 @@ class TrialConfig:
 			name += f"_maxd{self.max_degree}"
 		if self.sublayers is not None:
 			name += f"_subl{self.sublayers}"
+		if self.weight_decay != 0.0:
+			name += f"_wd{self.weight_decay}"
 		return name
 	
 	@property

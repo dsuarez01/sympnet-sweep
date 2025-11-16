@@ -1,4 +1,3 @@
-import os
 import itertools
 import argparse
 import uuid
@@ -88,6 +87,7 @@ def main(args: argparse.Namespace) -> None:
 		"F": 0.3,
 		"omega": 1.0,
 		"dim": 2,
+		"weight_decay": 0.0,
 		"val_size": 0.2,
 		"random_state": 42,
 		"batch_size": 100,
@@ -113,8 +113,11 @@ def main(args: argparse.Namespace) -> None:
 				add_config(h, n_data, layers, sym, method, width=width)
 		
 		elif method == "P":
-			for max_degree in [2, 3, 4, 8, 12, 16, 24]:
-				add_config(h, n_data, layers, sym, method, min_degree=2, max_degree=max_degree)
+			for max_degree, weight_decay in itertools.product(
+				[2, 3, 4, 8, 12, 16, 24],
+				[0.0, 1e-4, 1e-3, 1e-2, 1e-1]
+			):
+				add_config(h, n_data, layers, sym, method, min_degree=2, max_degree=max_degree, weight_decay=weight_decay)
 		
 		elif method == "LA":
 			for sublayers in [3, 6, 9, 12]:

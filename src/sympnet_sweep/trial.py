@@ -1,26 +1,22 @@
 import argparse
-import os
-
-# probably overkill, but worth a shot
-# os.environ["OMP_NUM_THREADS"] = "1"
-# os.environ["MKL_NUM_THREADS"] = "1"
-# os.environ["OPENBLAS_NUM_THREADS"] = "1"
-# os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-# os.environ["NUMEXPR_NUM_THREADS"] = "1"
+import time
 
 import ray
 import wandb
 from sklearn.model_selection import train_test_split
-from strupnet import SympNet
 import torch
-torch.set_default_dtype(torch.float64)
-torch.set_num_threads(1)
-torch.set_num_interop_threads(1)
 from torch.utils.data import DataLoader
+from strupnet import SympNet
 
 from sympnet_sweep.utils import load_dataset, SympNetDS, TrialConfig
 
-@ray.remote(num_cpus=1)
+def setup_torch():
+	import torch
+	torch.set_default_dtype(torch.float64)
+	torch.set_num_threads(1)
+	torch.set_num_interop_threads(1)
+
+@ray.remote(num_cpus=1, runtime_env={"worker_process_setup_hook":"sympnet_sweep.trial.setup_torch"})
 def run_trial(trial_config: TrialConfig, args: argparse.Namespace) -> None:
 
 	if trial_config.checkpt_path.exists():
@@ -29,15 +25,23 @@ def run_trial(trial_config: TrialConfig, args: argparse.Namespace) -> None:
 		start_epoch = trial_config.checkpt["epoch"]+1
 		train_losses = trial_config.checkpt["train_losses"]
 		val_losses = trial_config.checkpt["val_losses"]
+		best_val_loss = trial_config.checkpt["best_val_loss"]
+		t_elapsed = trial_config.checkpt["elapsed_time"]
+		t_0 = time.time()
 	else:
 		start_epoch = 0
 		train_losses = []
 		val_losses = []
+		best_val_loss = float("inf")
+		t_elapsed = 0.0
+		t_0 = time.time()
 
 	if start_epoch >= trial_config.epochs: return # early termination to avoid extra inits.
 
 	config = {k:v for k,v in vars(trial_config).items() if k != "checkpt"}
 	
+	print(f"Starting model run: {trial_config.model_name}")
+
 	run = wandb.init(
 		entity=args.entity,
 		project="sympnet-sweep",
@@ -76,7 +80,7 @@ def run_trial(trial_config: TrialConfig, args: argparse.Namespace) -> None:
 	}
 	
 	model = SympNet(**model_kwargs)
-	opt = torch.optim.Adam(model.parameters(), lr=trial_config.lr)
+	opt = torch.optim.Adam(model.parameters(), lr=trial_config.lr, weight_decay=trial_config.weight_decay)
 
 	if trial_config.checkpt:
 		model.load_state_dict(trial_config.checkpt["model"])
@@ -92,7 +96,6 @@ def run_trial(trial_config: TrialConfig, args: argparse.Namespace) -> None:
 			pred = model(x_i, dt=trial_config.h, symmetric=trial_config.symmetric)
 			loss = ((pred-truth)**2).sum(dim=-1).mean() # avg l2 norms over batch
 			loss.backward()
-			torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 			opt.step()
 			train_loss += loss.item()
 
@@ -112,23 +115,26 @@ def run_trial(trial_config: TrialConfig, args: argparse.Namespace) -> None:
 		val_loss /= len(val_dl)
 		val_losses.append(val_loss)
 
-		# checkpt once every 5000 epochs, or at the very end
-		if ((epoch+1) % 5000 == 0) or (epoch == trial_config.epochs-1):
+		# checkpt only on best val loss
+		if val_loss < best_val_loss:
+			t_now = time.time()
+			t_elapsed += t_now-t_0
+			t_0 = t_now
+			best_val_loss = val_loss
 			checkpt = {
 				"model": model.state_dict(),
 				"opt": opt.state_dict(),
 				"epoch": epoch,
 				"train_losses": train_losses,
 				"val_losses": val_losses,
+				"best_val_loss": best_val_loss,
+				"t_elapsed": t_elapsed,
 				"run_id": trial_config.run_id,
 			}
 
-			torch.save(
-				checkpt,
-				trial_config.checkpt_path,
-			)
+			torch.save(checkpt, trial_config.checkpt_path)
 
-			print(f"Epoch progress at checkpt: {epoch+1}/{trial_config.epochs}")
+			print(f"New best at epoch {epoch+1}/{trial_config.epochs}: val_loss={val_loss:.6e}, time={t_elapsed:.1f}s")
 
 		run.log({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss})
 
