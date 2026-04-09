@@ -1,13 +1,16 @@
-import itertools
 import argparse
-import uuid
 from datetime import datetime
+import itertools
+import os
+import uuid
 
 import dotenv
 import ray
+from ray import tune
+from ray.tune.schedulers import ASHAScheduler
 import wandb
 
-from sympnet_sweep.trial import run_trial
+from sympnet_sweep.trial import build_trial_fn
 from sympnet_sweep.utils import TrialConfig
 
 SUPPORTED_SYSTEMS = ["duffing"]
@@ -53,29 +56,33 @@ def main(args: argparse.Namespace) -> None:
 	(reverse used internally if symmetric enabled)
 	"""
 
+	dotenv.load_dotenv()
+
 	# ray + wandb handling
 	print("run_sweep.py: init. ray cluster in main...")
-	# init ray here
+
 	ray.init(
 		address="auto",
 		runtime_env={
-			"OMP_NUM_THREADS" : 1,
-			"MKL_NUM_THREADS" : 1,
-			"OPENBLAS_NUM_THREADS" : 1,
-			"VECLIB_MAXIMUM_THREADS" : 1,
-			"NUMEXPR_NUM_THREADS" : 1,
+			"worker_process_setup_hook": "sympnet_sweep.trial.setup_torch",
+			"env_vars": {
+				"WANDB_API_KEY": os.environ.get("WANDB_API_KEY"),
+				"OMP_NUM_THREADS": "1",
+				"MKL_NUM_THREADS": "1",
+				"OPENBLAS_NUM_THREADS": "1",
+				"VECLIB_MAXIMUM_THREADS": "1",
+				"NUMEXPR_NUM_THREADS": "1",
+			}
 		},
 	)
 
 	print("run_sweep.py: ray cluster resources are", ray.cluster_resources())
 
-	dotenv.load_dotenv()
-
 	if args.enable_wandb:
 		wandb.login()
 		wandb.setup()
 
-	configs: list[ray.ObjectRef[TrialConfig]] = []
+	configs = []
 	base_kwargs = {
 		"system": args.system,
 		"ts": args.timestamp if args.timestamp else datetime.now().strftime('%m%d-%Y-%H%M'),
@@ -98,8 +105,7 @@ def main(args: argparse.Namespace) -> None:
 			"layers": layers, "symmetric": sym, "method": method,
 			"run_id": str(uuid.uuid4()),
 			**method_kwargs}
-		trial_ref = ray.put(TrialConfig(**config_dict))
-		configs.append(trial_ref)
+		configs.append(config_dict)
 
 	for (n_data, h), layers, sym, method in itertools.product(
 		[(100, 0.01), (200, 0.1), (400, 1.0)],
@@ -124,16 +130,22 @@ def main(args: argparse.Namespace) -> None:
 
 	print(f"Total configs: {len(configs)}")
 
-	futures = [run_trial.remote(c, args) for c in configs]
-	results = []
-	remaining = futures[:]
+	tuner = tune.Tuner(
+		build_trial_fn(args),
+		param_space={"config" : tune.grid_search(configs)},
+		tune_config=tune.TuneConfig(
+			scheduler=ASHAScheduler(
+				metric="val_loss",
+				mode="min",
+				max_t=50000,
+				grace_period=2000,
+				reduction_factor=2,
+			),
+		),
+	)
 
-	while remaining:
-		ready, remaining = ray.wait(remaining, num_returns=1)
-		results.extend(ready)
-	
-	results = ray.get(results)
-	print(f"Run finished: Ray completed {len(results)}/{len(configs)} trials")
+	results = tuner.fit()
+	print(f"Run finished: {len(results)} trials completed")
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser()
