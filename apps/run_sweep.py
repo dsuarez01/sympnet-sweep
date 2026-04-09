@@ -70,7 +70,6 @@ def main(args: argparse.Namespace) -> None:
 	print("run_sweep.py: ray cluster resources are", ray.cluster_resources())
 
 	dotenv.load_dotenv()
-	run_id = str(uuid.uuid4())
 
 	if args.enable_wandb:
 		wandb.login()
@@ -79,8 +78,7 @@ def main(args: argparse.Namespace) -> None:
 	configs: list[ray.ObjectRef[TrialConfig]] = []
 	base_kwargs = {
 		"system": args.system,
-		"ts": args.timestamp if args.timestamp else datetime.now().strftime('%m%d-%H%M'),
-		"run_id": run_id,
+		"ts": args.timestamp if args.timestamp else datetime.now().strftime('%m%d-%Y-%H%M'),
 		"checkpt": {},
 		"epochs": 50000,
 		"lr": 0.002,
@@ -96,8 +94,9 @@ def main(args: argparse.Namespace) -> None:
 	}
 
 	def add_config(h, n_data, layers, sym, method, **method_kwargs):
-		config_dict = {**base_kwargs, "h": h, "n_data": n_data, 
+		config_dict = {**base_kwargs, "h": h, "n_data": n_data,
 			"layers": layers, "symmetric": sym, "method": method,
+			"run_id": str(uuid.uuid4()),
 			**method_kwargs}
 		trial_ref = ray.put(TrialConfig(**config_dict))
 		configs.append(trial_ref)

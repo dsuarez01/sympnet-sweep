@@ -26,7 +26,7 @@ def run_trial(trial_config: TrialConfig, args: argparse.Namespace) -> None:
 		train_losses = trial_config.checkpt["train_losses"]
 		val_losses = trial_config.checkpt["val_losses"]
 		best_val_loss = trial_config.checkpt["best_val_loss"]
-		t_elapsed = trial_config.checkpt["elapsed_time"]
+		t_elapsed = trial_config.checkpt["t_elapsed"]
 		t_0 = time.time()
 	else:
 		start_epoch = 0
@@ -50,7 +50,7 @@ def run_trial(trial_config: TrialConfig, args: argparse.Namespace) -> None:
 		id=trial_config.run_id,
 		config=config,
 		resume="allow",
-		mode="offline" if args.enable_wandb else "disabled",
+		mode="online" if args.enable_wandb else "disabled",
 	)
 
 	dataset = load_dataset(
