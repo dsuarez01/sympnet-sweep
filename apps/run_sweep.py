@@ -66,6 +66,7 @@ def main(args: argparse.Namespace) -> None:
 		runtime_env={
 			"worker_process_setup_hook": "sympnet_sweep.trial.setup_torch",
 			"env_vars": {
+				"RAY_CHDIR_TO_TRIAL_DIR": "0",
 				"WANDB_API_KEY": os.environ.get("WANDB_API_KEY"),
 				"OMP_NUM_THREADS": "1",
 				"MKL_NUM_THREADS": "1",
