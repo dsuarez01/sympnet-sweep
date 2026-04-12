@@ -1,64 +1,16 @@
 import argparse
 from datetime import datetime
-import itertools
-import os
-import uuid
 
-import dotenv
 import ray
 from ray import tune
 from ray.tune.schedulers import ASHAScheduler
-import wandb
 
-from sympnet_sweep.trial import build_trial_fn
-from sympnet_sweep.utils import TrialConfig
-
-SUPPORTED_SYSTEMS = ["duffing"]
+from sympnet_sweep.config import PARAMS, PROJECT_ROOT, SUPPORTED_SYSTEMS
+from sympnet_sweep.trial import run_trial
 
 def main(args: argparse.Namespace) -> None:
-	"""
-	(See Section 4.1, pg. 20 of [2]; Section 4.4, pg. 23 of [2])
+	""" Sweep runner for SympNet hyperparameter search using Ray Tune """
 
-	trial params:      applies to?             choose one of these vals for trial
-
-	(data/general)
-	- epochs         (all)                   : [50_000]
-	- lr             (all)                   : [0.002 (Adam)]
-	- h              (all)                   : [0.01, 0.1, 1.0]
-	- n_data         (all)                   : [100, 200, 400]
-	- F              (all)                   : [0.3]
-	- omega          (all)                   : [1.0]
-
-	(model config)
-	- dim            (all)                   : [2]
-	- layers         (all)                   : [8, 12, 16, 24, 32, 48, 64]
-	- width          (G, GR, H, R)           : [4, 8, 16, 32, 64]
-	- symmetric      (all)                   : [True, False]
-	- method         (all)                   : ["R", "P", "G", "GR", "LA", "H"]
-	- min_deg        (P only)                : [2]
-	- max_deg        (P only)                : [2, 3, 4, 8, 12, 16, 24]
-	- sublayers      (LA only)               : [3, 6, 9, 12]
-	- activation     (N/A, see strupnet)     : [None]
-	- volume_step    (N/A, see strupnet)     : [False]
-
-	note:
-
-	dim=2 since there are 2 degrees of freedom in the augmented Hamiltonian
-
-	For P-SympNets, min_deg=2 by default. Refer to pg. 14 of [2]: 'In practice, we will let the [basis Hamiltonian] sum
-	run from 2 to d to avoid linear terms in the Hamiltonian, an additional physical assumption
-	that would otherwise correspond to a constant term in the ODE.'
-
-	activation is only applicable to certain methods, hardcoded in repo if so
-
-	volume_step unrelated to SympNets
-
-	(reverse used internally if symmetric enabled)
-	"""
-
-	dotenv.load_dotenv()
-
-	# ray + wandb handling
 	print("run_sweep.py: init. ray cluster in main...")
 
 	ray.init(
@@ -67,7 +19,6 @@ def main(args: argparse.Namespace) -> None:
 			"worker_process_setup_hook": "sympnet_sweep.trial.setup_torch",
 			"env_vars": {
 				"RAY_CHDIR_TO_TRIAL_DIR": "0",
-				"WANDB_API_KEY": os.environ.get("WANDB_API_KEY"),
 				"OMP_NUM_THREADS": "1",
 				"MKL_NUM_THREADS": "1",
 				"OPENBLAS_NUM_THREADS": "1",
@@ -79,85 +30,75 @@ def main(args: argparse.Namespace) -> None:
 
 	print("run_sweep.py: ray cluster resources are", ray.cluster_resources())
 
-	if args.enable_wandb:
-		wandb.login()
-		wandb.setup()
+	timestamp = args.timestamp if args.timestamp else datetime.now().strftime('%m%d-%Y-%H%M') 
 
-	configs = []
-	base_kwargs = {
-		"system": args.system,
-		"ts": args.timestamp if args.timestamp else datetime.now().strftime('%m%d-%Y-%H%M'),
-		"checkpt": {},
-		"epochs": 50000,
-		"lr": 0.002,
-		"F": 0.3,
-		"omega": 1.0,
-		"dim": 2,
-		"weight_decay": 0.0,
-		"val_size": 0.2,
-		"random_state": 42,
-		"batch_size": 100,
-		"activation": None,
-		"volume_step": False,
-	}
+	experiment_path = PROJECT_ROOT / "checkpts" / f"{args.system}_{timestamp}"
 
-	def add_config(h, n_data, layers, sym, method, **method_kwargs):
-		config_dict = {**base_kwargs, "h": h, "n_data": n_data,
-			"layers": layers, "symmetric": sym, "method": method,
-			"run_id": str(uuid.uuid4()),
-			**method_kwargs}
-		configs.append(config_dict)
+	if tune.Tuner.can_restore(str(experiment_path)):
+		tuner = tune.Tuner.restore(
+			path=str(experiment_path),
+			trainable=run_trial,
+		)
+	else:
+		params_system = PARAMS[args.system]["system"]
+		params_train = PARAMS[args.system]["train"]
+		params_search = PARAMS[args.system]["search"]
 
-	for (n_data, h), layers, sym, method in itertools.product(
-		[(100, 0.01), (200, 0.1), (400, 1.0)],
-		[8, 12, 16, 24, 32, 48, 64],
-		[True, False],
-		["R", "P", "G", "GR", "LA", "H"]
-	):
-		if method in ["G", "GR", "H", "R"]:
-			for width in [4, 8, 16, 32, 64]:
-				add_config(h, n_data, layers, sym, method, width=width)
-		
-		elif method == "P":
-			for max_degree, weight_decay in itertools.product(
-				[2, 3, 4, 8, 12, 16, 24],
-				[0.0, 1e-4, 1e-3, 1e-2, 1e-1]
-			):
-				add_config(h, n_data, layers, sym, method, min_degree=2, max_degree=max_degree, weight_decay=weight_decay)
-		
-		elif method == "LA":
-			for sublayers in [3, 6, 9, 12]:
-				add_config(h, n_data, layers, sym, method, sublayers=sublayers)
+		param_space = {
+			"system": args.system,
+			"ts": timestamp,
+			**params_system,
+			**params_train,
+			"h": tune.grid_search(params_search["h"]),
+			"n_data": tune.grid_search(params_search["n_data"]),
+			"layers": tune.grid_search(params_search["layers"]),
+			"symmetric": tune.grid_search(params_search["symmetric"]),
+			"method": tune.grid_search(params_search["method"]),
+			"_width": tune.grid_search(params_search["width"]),
+			"_max_degree": tune.grid_search(params_search["max_degree"]),
+			"_weight_decay": tune.grid_search(params_search["weight_decay"]),
+			"_sublayers": tune.grid_search(params_search["sublayers"]),
+			"min_degree": params_search["min_degree"],
+			"activation": params_search["activation"],
+			"volume_step": params_search["volume_step"],
+			"width": tune.sample_from(lambda spec: spec.config._width if spec.config.method in ["R", "G", "GR", "H"] else None), # type: ignore
+			"max_degree": tune.sample_from(lambda spec: spec.config._max_degree if spec.config.method == "P" else None), # type: ignore
+			"weight_decay": tune.sample_from(lambda spec: spec.config._weight_decay if spec.config.method == "P" else None), # type: ignore
+			"sublayers": tune.sample_from(lambda spec: spec.config._sublayers if spec.config.method == "LA" else None), # type: ignore
+		}
 
-	print(f"Total configs: {len(configs)}")
-
-	tuner = tune.Tuner(
-		build_trial_fn(args),
-		param_space={"config" : tune.grid_search(configs)},
-		tune_config=tune.TuneConfig(
-			scheduler=ASHAScheduler(
-				metric="val_loss",
-				mode="min",
-				max_t=50000,
-				grace_period=2000,
-				reduction_factor=2,
+		tuner = tune.Tuner(
+			run_trial,
+			param_space=param_space,
+			tune_config=tune.TuneConfig(
+				scheduler=ASHAScheduler(
+					metric="val_loss",
+					mode="min",
+					max_t=50000,
+					grace_period=2000,
+					reduction_factor=2,
+				),
 			),
-		),
-	)
+			run_config=tune.RunConfig(
+				name=f"{args.system}_{timestamp}",
+				storage_path=str(PROJECT_ROOT / "checkpts"),
+			),
+		)
 
 	results = tuner.fit()
 	print(f"Run finished: {len(results)} trials completed")
 
+	if len(results) > 0:
+		(PROJECT_ROOT / "results").mkdir(exist_ok=True)
+		results_df = results.get_dataframe()
+		results_df = results_df.drop(columns=[c for c in results_df.columns if c.startswith("config/_")])
+		results_df.to_csv(PROJECT_ROOT / f"results/{args.system}_{timestamp}.csv", index=False)
+
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser()
-	parser.add_argument("--entity", required=False, default = "", help="Wandb username (for logging)")
-	parser.add_argument("-s", "--system", required=True, choices=["duffing"], help="System name (resumes from this arg if passed and logging enabled)")
-	parser.add_argument("-t", "--timestamp", required=False, default = "", help="Wandb timestamp (resumes from this arg if passed and logging enabled)")
-	parser.add_argument("--enable-wandb", action="store_true", help="Enables Wandb logging if provided")
+	parser.add_argument("-s", "--system", required=True, choices=SUPPORTED_SYSTEMS, help="System name (Ray resumes based on this arg if possible)")
+	parser.add_argument("-t", "--timestamp", required=False, default = "", help="timestamp (Ray resumes based on this arg if possible)")
 	args = parser.parse_args()
-	
-	if args.enable_wandb:
-		assert args.entity, "Entity name must be passed in if Wandb logging is enabled"
 
-	print("run_sweep.py: submitting to main...")
+	print(f"run_sweep.py: submitting to main for {args.system}...")
 	main(args)

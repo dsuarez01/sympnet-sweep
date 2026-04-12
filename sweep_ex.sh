@@ -113,7 +113,5 @@ done
 export RAY_ADDRESS="$ip_head"
 ray job submit -- \
   python -u apps/run_sweep.py \
- --entity <wandb username> \
  --system <e.g. duffing> \
  --timestamp <add if resuming> \
- --enable-wandb

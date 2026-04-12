@@ -1,0 +1,63 @@
+# (See Section 4.1, pg. 20 of [2]; Section 4.4, pg. 23 of [2])
+
+# trial params:      applies to?             choose one of these vals for trial
+
+# (data/general)
+# - epochs         (all)                   : [50_000]
+# - lr             (all)                   : [0.002 (Adam)]
+# - h              (all)                   : [0.01, 0.1, 1.0]
+# - n_data         (all)                   : [100, 200, 400]
+# - F              (all)                   : [0.3]
+# - omega          (all)                   : [1.0]
+
+# (model config)
+# - dim            (all)                   : [2]
+# - layers         (all)                   : [8, 12, 16, 24, 32, 48, 64]
+# - width          (G, GR, H, R)           : [4, 8, 16, 32, 64]
+# - symmetric      (all)                   : [True, False]
+# - method         (all)                   : ["R", "P", "G", "GR", "LA", "H"]
+# - min_deg        (P only)                : [2]
+# - max_deg        (P only)                : [2, 3, 4, 8, 12, 16, 24]
+# - sublayers      (LA only)               : [3, 6, 9, 12]
+# - activation     (N/A, see strupnet)     : [None]
+# - volume_step    (N/A, see strupnet)     : [False]
+
+# note:
+
+# dim=2 since there are 2 degrees of freedom in the augmented Hamiltonian
+
+# For P-SympNets, min_deg=2 by default. Refer to pg. 14 of [2]: 'In practice, we will let the [basis Hamiltonian] sum
+# run from 2 to d to avoid linear terms in the Hamiltonian, an additional physical assumption
+# that would otherwise correspond to a constant term in the ODE.'
+
+# activation is only applicable to certain methods, hardcoded in repo if so
+
+# volume_step unrelated to SympNets
+
+# (reverse used internally if symmetric enabled)
+
+duffing:
+  system:
+    F: 0.3
+    omega: 1.0
+    dim: 2
+  train:
+    epochs: 50000
+    optimizer: adam
+    lr: 0.002
+    val_size: 0.2
+    random_state: 42
+    batch_size: 100
+  search:
+    h: [0.01, 0.1, 1.0]
+    n_data: [100, 200, 400]
+    layers: [8, 12, 16, 24, 32, 48, 64]
+    symmetric: [true, false]
+    method: ["R", "P", "G", "GR", "LA", "H"]
+    width: [4, 8, 16, 32, 64]
+    max_degree: [2, 3, 4, 8, 12, 16, 24]
+    weight_decay: [0.0, 1.0e-4, 1.0e-3, 1.0e-2, 1.0e-1]
+    sublayers: [3, 6, 9, 12]
+    min_degree: 2
+    activation: null
+    volume_step: false

@@ -7,14 +7,12 @@ requires-python = ">=3.12, <3.13"
 dependencies = [
     "matplotlib >= 3.10.3",
     "numpy >= 2.2.6",
-    "python-dotenv >= 1.1.0",
     "ray[default,tune] >= 2.46.0",
     "scikit-learn >= 1.6.1",
     "scipy >= 1.15.3",
     "seaborn >= 0.13.2",
     "strupnet >= 0.0.4",
     "torch >= 2.7.0",
-    "wandb >= 0.19.11",
 ]
 
 [build-system]

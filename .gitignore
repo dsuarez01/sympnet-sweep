@@ -1,7 +1,5 @@
 .vscode
-.env
 logs
-wandb
 checkpts
 data
 sweep.sh

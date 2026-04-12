@@ -1,63 +1,64 @@
-import pathlib
-from dataclasses import dataclass, field
+import functools
 
 import numpy as np
+from scipy.integrate import solve_ivp
 import torch
 from torch.utils.data import Dataset
-from scipy.integrate import solve_ivp
 
-from sympnet_sweep.systems import duffing
+from sympnet_sweep.config import PROJECT_ROOT, SUPPORTED_SYSTEMS, OPTIMIZER_MAP
+from sympnet_sweep import systems
 
-SUPPORTED_SYSTEMS = ["duffing"]
-SYSTEM_TO_METHOD= {"duffing": duffing}
+def get_solver(system: str):
+	return getattr(systems, system)
 
-def solve(system: str, n_data: int, h: float, F: float, omega: float) -> np.ndarray:
+def get_ic_sampler(system: str):
+	return getattr(systems, system).ic
+
+def get_optimizer(optimizer: str):
+	return getattr(torch.optim, OPTIMIZER_MAP[optimizer])
+
+def solve(system: str, n_data: int, h: float, **system_kwargs) -> np.ndarray:
 	assert system in SUPPORTED_SYSTEMS, "Unsupported system"
-	period = 2*np.pi / omega
+	solver = functools.partial(get_solver(system), **system_kwargs)
+	ic_sampler = get_ic_sampler(system)
 	dataset = []
 
 	for i in range(n_data):
-		p_0 = np.random.uniform(-0.5, 0.5)
-		p_tau_0 = 0.0
-		q_0 = np.random.uniform(-0.5, 0.5)
-		tau_0 = np.random.uniform(0, period)
-		x_aug_i = np.array([p_0, p_tau_0, q_0, tau_0])
+		x0 = ic_sampler(**system_kwargs)
 
 		result = solve_ivp(
-			fun=SYSTEM_TO_METHOD[system],
+			fun=solver,
 			t_span=[0.,h],
-			y0=x_aug_i,
+			y0=x0,
 			method="DOP853", # 8th order RK
-			args=(F,omega),
 			rtol=3e-14, # scipy complains at ~ 2.2e-14
-			atol=1e-15 * np.maximum(1.0, np.abs(x_aug_i)),
+			atol=1e-15 * np.maximum(1.0, np.abs(x0)),
 			dense_output=False
 		)
 
 		if not result.success:
 			print(f"Integration failed at sample {i}")
-			print(f"At dataset: n_data={n_data}, h={h}, F={F}, omega={omega}")
+			print(f"At dataset: n_data={n_data}, h={h}, {system_kwargs}")
 			print(f"Msg.: {result.message}")
 			continue
 
 		truth = result.y[:, -1]
-		dataset.append(np.array([x_aug_i, truth]))
+		dataset.append(np.array([x0, truth]))
 
 	return np.array(dataset)
 
-def load_dataset(system: str, n_data: int, h: float, F: float, omega: float) -> np.ndarray:
+def load_dataset(system: str, n_data: int, h: float, **system_kwargs) -> np.ndarray:
 	assert system in SUPPORTED_SYSTEMS, "Unsupported system"
-	filepath = pathlib.Path(f"./data/{system}/n{n_data}_h{h}_F{F}_omega{omega}.npy")
+	kwarg_str = "_".join(f"{k}{v}" for k, v in system_kwargs.items())
+	filepath = PROJECT_ROOT / f"data/{system}/n{n_data}_h{h}/{kwarg_str}.npy"
 	return np.load(filepath)
 
-def save_dataset(system: str, n_data: int, h: float, F: float, omega: float) -> None:
+def save_dataset(system: str, n_data: int, h: float, **system_kwargs) -> None:
 	assert system in SUPPORTED_SYSTEMS, "Unsupported system"
-	filepath = pathlib.Path(f"./data/{system}/n{n_data}_h{h}_F{F}_omega{omega}.npy")
+	kwarg_str = "_".join(f"{k}{v}" for k, v in system_kwargs.items())
+	filepath = PROJECT_ROOT / f"data/{system}/n{n_data}_h{h}/{kwarg_str}.npy"
 	filepath.parent.mkdir(parents=True, exist_ok=True)
-	np.save(
-		filepath,
-		solve(system, n_data, h, F, omega),
-	)
+	np.save(filepath, solve(system, n_data, h, **system_kwargs))
 
 class SympNetDS(Dataset):
 	def __init__(self, data: np.ndarray) -> None:
@@ -68,65 +69,3 @@ class SympNetDS(Dataset):
 	
 	def __getitem__(self, idx) -> torch.Tensor:
 		return self.data[idx]
-
-@dataclass
-class TrialConfig:
-	# for wandb logging / gen
-	system: str
-	ts: str
-	run_id: str
-
-	# data/gen (non-opt)
-	epochs: int
-	lr: float
-	h: float
-	n_data: int
-	F: float
-	omega: float
-	
-	# gen. model config (non-opt)
-	dim: int
-	layers: int
-	symmetric: bool
-	method: str
-	
-	# train config
-	weight_decay: float
-	val_size: float
-	random_state: int
-	batch_size: int
-	activation: str | None
-	volume_step: bool
-
-	# checkpt
-	checkpt: dict
-
-	# method-specific model config (w/ defaults)
-	width: int | None = None
-	min_degree: int | None = None
-	max_degree: int | None = None
-	sublayers: int | None = None
-
-	@property
-	def model_name(self) -> str:
-		name = f"symp{self.method}_l{self.layers}_h{self.h}_n{self.n_data}_sym{self.symmetric}"
-		if self.width is not None:
-			name += f"_w{self.width}"
-		if self.min_degree is not None:
-			name += f"_mind{self.min_degree}"
-		if self.max_degree is not None:
-			name += f"_maxd{self.max_degree}"
-		if self.sublayers is not None:
-			name += f"_subl{self.sublayers}"
-		if self.weight_decay != 0.0:
-			name += f"_wd{self.weight_decay}"
-		return name
-	
-	@property
-	def checkpt_path(self) -> pathlib.Path:
-		path = pathlib.Path(f"./checkpts/{self.system}/{self.ts}/{self.model_name}.pt")
-		path.parent.mkdir(parents=True, exist_ok=True)
-		return path
-
-	def __post_init__(self):
-		assert self.system in SUPPORTED_SYSTEMS
