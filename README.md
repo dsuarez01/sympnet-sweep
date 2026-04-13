@@ -2,7 +2,7 @@
 
 ### Introduction:
 
-This project aims to reproduce the results of [^1], which presents a framework for constructing symplectic neural networks (SympNets) based on geometric integrators: these models learn $\phi_h$ that generates the time-series data $\{x(t_i), x(t_i + h)\}_{i=1}^{n_{\text{data}}}$, where $\phi_h(x(t_i)) = x(t_i + h)$ is the unknown symplectic mapping.
+This project aims to reproduce the results of a paper that presents a framework for constructing symplectic neural networks (SympNets) based on geometric integrators: these models learn $\phi_h$ that generates time-series data $(x(t_i), x(t_i + h))$ for $i = 1, \ldots, n_{\text{data}}$, where $\phi_h(x(t_i)) = x(t_i + h)$ is the unknown symplectic mapping.[^1]
 
 So far, the code:
 
