@@ -57,6 +57,8 @@ def save_dataset(system: str, n_data: int, h: float, **system_kwargs) -> None:
 	assert system in SUPPORTED_SYSTEMS, "Unsupported system"
 	kwarg_str = "_".join(f"{k}{v}" for k, v in system_kwargs.items())
 	filepath = PROJECT_ROOT / f"data/{system}/n{n_data}_h{h}/{kwarg_str}.npy"
+	if filepath.exists():
+		return
 	filepath.parent.mkdir(parents=True, exist_ok=True)
 	np.save(filepath, solve(system, n_data, h, **system_kwargs))
 

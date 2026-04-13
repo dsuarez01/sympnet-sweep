@@ -2,6 +2,7 @@
 logs
 checkpts
 data
+mlruns
 sweep.sh
 
 # python-specific

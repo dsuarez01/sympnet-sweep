@@ -1,12 +1,15 @@
 import argparse
 from datetime import datetime
+import itertools
 
 import ray
 from ray import tune
+from ray.air.integrations.mlflow import MLflowLoggerCallback
 from ray.tune.schedulers import ASHAScheduler
 
 from sympnet_sweep.config import PARAMS, PROJECT_ROOT, SUPPORTED_SYSTEMS
 from sympnet_sweep.trial import run_trial
+from sympnet_sweep.utils import save_dataset
 
 def main(args: argparse.Namespace) -> None:
 	""" Sweep runner for SympNet hyperparameter search using Ray Tune """
@@ -44,28 +47,35 @@ def main(args: argparse.Namespace) -> None:
 		params_train = PARAMS[args.system]["train"]
 		params_search = PARAMS[args.system]["search"]
 
+		configs = []
+		for method, method_params in params_search["methods"].items():
+			keys = list(method_params.keys())
+			for combo in itertools.product(*method_params.values()):
+				configs.append({"method": method, **dict(zip(keys, combo))})
+
 		param_space = {
 			"system": args.system,
 			"ts": timestamp,
 			**params_system,
 			**params_train,
-			"h": tune.grid_search(params_search["h"]),
-			"n_data": tune.grid_search(params_search["n_data"]),
 			"layers": tune.grid_search(params_search["layers"]),
 			"symmetric": tune.grid_search(params_search["symmetric"]),
-			"method": tune.grid_search(params_search["method"]),
-			"_width": tune.grid_search(params_search["width"]),
-			"_max_degree": tune.grid_search(params_search["max_degree"]),
-			"_weight_decay": tune.grid_search(params_search["weight_decay"]),
-			"_sublayers": tune.grid_search(params_search["sublayers"]),
 			"min_degree": params_search["min_degree"],
 			"activation": params_search["activation"],
 			"volume_step": params_search["volume_step"],
-			"width": tune.sample_from(lambda spec: spec.config._width if spec.config.method in ["R", "G", "GR", "H"] else None), # type: ignore
-			"max_degree": tune.sample_from(lambda spec: spec.config._max_degree if spec.config.method == "P" else None), # type: ignore
-			"weight_decay": tune.sample_from(lambda spec: spec.config._weight_decay if spec.config.method == "P" else None), # type: ignore
-			"sublayers": tune.sample_from(lambda spec: spec.config._sublayers if spec.config.method == "LA" else None), # type: ignore
+			"_h_n_data": tune.grid_search(list(zip(params_search["h"], params_search["n_data"]))),
+			"h": tune.sample_from(lambda spec: spec["_h_n_data"][0]), # type: ignore
+			"n_data": tune.sample_from(lambda spec: spec["_h_n_data"][1]), # type: ignore
+			"_method_config": tune.grid_search(configs),
+			"method": tune.sample_from(lambda spec: spec["_method_config"]["method"]), # type: ignore
+			"width": tune.sample_from(lambda spec: spec["_method_config"].get("width")), # type: ignore
+			"max_degree": tune.sample_from(lambda spec: spec["_method_config"].get("max_degree")), # type: ignore
+			"weight_decay": tune.sample_from(lambda spec: spec["_method_config"].get("weight_decay")), # type: ignore
+			"sublayers": tune.sample_from(lambda spec: spec["_method_config"].get("sublayers")), # type: ignore
 		}
+
+		for h, n_data in param_space["_h_n_data"]["grid_search"]:
+			save_dataset(args.system, n_data, h, **params_system)
 
 		tuner = tune.Tuner(
 			run_trial,
@@ -74,14 +84,23 @@ def main(args: argparse.Namespace) -> None:
 				scheduler=ASHAScheduler(
 					metric="val_loss",
 					mode="min",
-					max_t=50000,
-					grace_period=2000,
+					max_t=500,
+					grace_period=20,
 					reduction_factor=2,
 				),
 			),
 			run_config=tune.RunConfig(
 				name=f"{args.system}_{timestamp}",
 				storage_path=str(PROJECT_ROOT / "checkpts"),
+				checkpoint_config=tune.CheckpointConfig(
+					num_to_keep=1,
+					checkpoint_score_attribute="val_loss",
+					checkpoint_score_order="min",
+				),
+				callbacks=[MLflowLoggerCallback(
+					tracking_uri=f"sqlite:///{PROJECT_ROOT}/mlruns/mlflow.db",
+					experiment_name=f"{args.system}_{timestamp}",
+				)],
 			),
 		)
 
