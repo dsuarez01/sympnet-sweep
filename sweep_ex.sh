@@ -109,6 +109,9 @@ for ((i = 1; i <= worker_num; i++)); do
   sleep 5
 done
 
+# limit max number of pending trials (reduces scheduling overhead)
+export TUNE_MAX_PENDING_TRIALS_PG=200
+
 # submit to cluster
 export RAY_ADDRESS="$ip_head"
 ray job submit -- \

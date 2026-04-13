@@ -22,6 +22,7 @@ def main(args: argparse.Namespace) -> None:
 			"worker_process_setup_hook": "sympnet_sweep.trial.setup_torch",
 			"env_vars": {
 				"RAY_CHDIR_TO_TRIAL_DIR": "0",
+				"TUNE_MAX_PENDING_TRIALS_PG": "200",
 				"OMP_NUM_THREADS": "1",
 				"MKL_NUM_THREADS": "1",
 				"OPENBLAS_NUM_THREADS": "1",
