@@ -109,5 +109,5 @@ def run_trial(config: dict) -> None:
 					checkpoint=tune.Checkpoint.from_directory(checkpoint_dir),
 				)
 				print(f"New best at epoch {epoch+1}/{config['epochs']}: val_loss={val_loss:.6e}")
-		else:
+		elif epoch % 100 == 0:
 			tune.report({"epoch": epoch, "val_loss": val_loss, "train_loss": train_loss})
